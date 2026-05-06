@@ -7,24 +7,35 @@ import { Platform } from 'react-native';
 
 const tintColorLight = '#0a7ea4';
 const tintColorDark = '#fff';
+const greenPrimary = 'rgb(185, 105, 70)'; /* 'rgb(255, 68, 16)' */
+const greenPrimaryLight = 'rgb(255, 150, 120)';
+const baseColor = '#1d1d1d';
+const middleSection = '#0f0f0f';
+
+export const GradientColors = {
+  start: greenPrimary,
+  end: greenPrimaryLight,
+};
 
 export const Colors = {
   light: {
     text: '#11181C',
     background: '#fff',
-    tint: tintColorLight,
-    icon: '#687076',
-    tabIconDefault: '#687076',
-    tabIconSelected: tintColorLight,
+    tint: greenPrimary,
+    icon: '#fff',
+    tabIconDefault: 'rgb(241, 241, 241)',
+    tabIconSelected: greenPrimary,
   },
   dark: {
     text: '#ECEDEE',
     background: '#151718',
-    tint: tintColorDark,
-    icon: '#9BA1A6',
-    tabIconDefault: '#9BA1A6',
-    tabIconSelected: tintColorDark,
+    tint: greenPrimary,
+    icon: '#fff',
+    tabIconDefault: 'rgb(255, 255, 255)',
+    tabIconSelected: greenPrimary,
+    secondColor: 'rgb(185, 105, 70)',
   },
+  middleSection: middleSection,
 };
 
 export const Fonts = Platform.select({

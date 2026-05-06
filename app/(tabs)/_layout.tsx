@@ -12,24 +12,45 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+        tabBarActiveTintColor: Colors.dark.secondColor,
+        tabBarInactiveTintColor: Colors.dark.tabIconDefault,
         headerShown: false,
         tabBarButton: HapticTab,
+        tabBarStyle: {
+          backgroundColor: '#1d1d1d',
+        },
       }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
-        }}
-      />
       <Tabs.Screen
         name="explore"
         options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          title: 'Home',
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="house.fill" color={color} />,
         }}
       />
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Tour',
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="paperplane.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="historial"
+        options={{
+          title: 'Travelog',
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="book.fill" color={color} />,
+        }}
+      />
+      <Tabs.Group screenOptions={{ presentation: 'modal', headerShown: false }}>
+        <Tabs.Screen
+          name="profile-modal"
+          options={{
+            href: 'profile-modal',
+            tabBarItemStyle: { display: 'none' },
+            tabBarStyle: { display: 'none' },
+          }}
+        />
+      </Tabs.Group>
     </Tabs>
   );
 }
