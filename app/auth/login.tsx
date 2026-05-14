@@ -1,4 +1,3 @@
-import GradientText from '@/components/ui/GradientText';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'expo-router';
@@ -116,7 +115,7 @@ export default function LoginScreen() {
       >
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
-          <GradientText text="SwifTour" style={styles.logo}/>
+          <Text style={styles.logo}>SwifTour</Text>
           <Text style={styles.subtitle}>
             {isSignUp ? 'Crea el teu compte' : 'Inicia sessió'}
           </Text>
@@ -222,17 +221,21 @@ const styles = StyleSheet.create({
   },
   logo: {
     fontSize: 48,
-    fontWeight: '700',
+    fontWeight: '800',
     textAlign: 'center',
     marginBottom: 16,
-    color: '#FFFFFF',
+    color: Colors.dark.tint,
+    letterSpacing: 3,
   },
   subtitle: {
-    fontSize: 24,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
     textAlign: 'center',
-    marginBottom: 40,
+    marginBottom: 20,
+    marginTop: 20,
     color: '#FFFFFF',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   form: {
     marginBottom: 32,

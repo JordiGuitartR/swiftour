@@ -1,5 +1,4 @@
 import GlowText from '@/components/ui/GlowText';
-import GradientIcon from '@/components/ui/GradientIcon';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useRouter } from 'expo-router';
@@ -10,7 +9,6 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -22,65 +20,137 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const API_BASE_URL = 'https://fea92eac-fb8e-42e4-a490-639315c26be4-00-3n18xjgklul1c.riker.replit.dev';
-// ─────────────────────────────────────────
-// TIPUS
-// ─────────────────────────────────────────
+
+const ALL_INTERESTS = [
+  'Context',
+  'Natura',
+  'Gastronomia',
+  'Història',
+  'Allotjament',
+  'Oci',
+];
+
+const SECTION_ICONS: Record<string, string> = {
+  'Natura': '🌿',
+  'Gastronomia': '🍽',
+  'Història': '🏛',
+  'Allotjament': '🏨',
+  'Oci': '🛍',
+};
+
+// ─── Tipus ────────────────────────────────────────────────────────────────────
+
+interface Prediction {
+  place_id: string;
+  description: string;
+  main_text: string;
+  secondary_text: string;
+}
+
+interface PlaceRecommendation {
+  nom: string;
+  rating: number | null;
+  descripcio: string;
+  photo_urls: string[];
+}
+
 interface GuideData {
   descripcio?: string;
   context?: string;
-  info_practica?: {
-    adreca?: string;
-    horaris?: string;
-    telefon?: string;
-    web?: string;
-    valoracio?: string;
-  };
-  llocs_propers?: { nom: string; tipus: string }[];
   clima?: string;
-  consell?: string;
+  seccions?: Record<string, PlaceRecommendation[]>;
 }
 
 interface GuideResult {
   guide: GuideData;
   place_name: string;
   photo_urls: string[];
+  usedInterests: string[];
 }
+
+// ─── Components auxiliars ─────────────────────────────────────────────────────
+
+function StarRating({ rating }: { rating: number | null }) {
+  if (!rating) return null;
+  const full = Math.round(rating);
+  return (
+    <View style={styles.starsRow}>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <Text key={i} style={[styles.star, i <= full ? styles.starFull : styles.starEmpty]}>
+          ★
+        </Text>
+      ))}
+      <Text style={styles.ratingText}>{rating.toFixed(1)}</Text>
+    </View>
+  );
+}
+
+function PhotoSlider({ photos }: { photos: string[] }) {
+  const [index, setIndex] = useState(0);
+  if (!photos || photos.length === 0) return null;
+  return (
+    <View style={styles.sliderContainer}>
+      <Image source={{ uri: photos[index] }} style={styles.sliderPhoto} resizeMode="cover" />
+      {photos.length > 1 && (
+        <>
+          <TouchableOpacity
+            style={styles.arrowLeft}
+            onPress={() => setIndex((i) => Math.max(0, i - 1))}
+          >
+            <Text style={styles.arrowText}>‹</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.arrowRight}
+            onPress={() => setIndex((i) => Math.min(photos.length - 1, i + 1))}
+          >
+            <Text style={styles.arrowText}>›</Text>
+          </TouchableOpacity>
+          <View style={styles.photoDots}>
+            {photos.map((_, i) => (
+              <View key={i} style={[styles.dot, i === index && styles.dotActive]} />
+            ))}
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
+
+// ─── Pantalla principal ───────────────────────────────────────────────────────
 
 export default function HomeScreen() {
   const router = useRouter();
+
+  // Input + autocomplete
   const [inputValue, setInputValue] = useState('');
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [predictions, setPredictions] = useState<Prediction[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Filtres
+  const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
+
+  // Resultat
   const [loading, setLoading] = useState(false);
   const [guideResult, setGuideResult] = useState<GuideResult | null>(null);
-  const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
+  const [mainPhotoIndex, setMainPhotoIndex] = useState(0);
+
   const scrollViewRef = useRef<ScrollView>(null);
-
-  // Filter states
-  const [filterModalOpen, setFilterModalOpen] = useState<string | null>(null);
-  const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
-  const [selectedRadius, setSelectedRadius] = useState<string | null>(null);
-  const [selectedTime, setSelectedTime] = useState<string | null>(null);
-  const [selectedPeople, setSelectedPeople] = useState<string | null>(null);
-
-  const [direction, setDirection] = useState(1);
   const animationRef = useRef<LottieView>(null);
+  const directionRef = useRef(1);
 
-  const allFiltersSelected =
-    selectedInterests.length > 0 &&
-    selectedRadius !== null &&
-    selectedTime !== null &&
-    selectedPeople !== null;
+  const isGuiaCompleta = ALL_INTERESTS.every((i) => selectedInterests.includes(i));
 
-  const canSearch = inputValue.trim().length > 0 && allFiltersSelected && !loading;
+  const interestsWithoutContext = selectedInterests.filter((i) => i !== 'Context');
+  const canSearch = inputValue.trim().length > 0 && interestsWithoutContext.length > 0 && !loading;
 
-  const handleFinish = () => {
-    const newDirection = direction * -1;
-    setDirection(newDirection);
+  // Lottie ping-pong
+  const handleAnimationFinish = () => {
+    directionRef.current *= -1;
     if (animationRef.current) {
-      if (newDirection === 1) {
-        animationRef.current.play(0, 180);
-      } else {
-        animationRef.current.play(180, 0);
-      }
+      if (directionRef.current === 1) animationRef.current.play(0, 180);
+      else animationRef.current.play(180, 0);
     }
   };
 
@@ -88,48 +158,81 @@ export default function HomeScreen() {
     animationRef.current?.play(0, 180);
   }, []);
 
-  const toggleInterest = (interest: string) => {
-    if (selectedInterests.includes(interest)) {
-      setSelectedInterests(selectedInterests.filter((item) => item !== interest));
-    } else {
-      setSelectedInterests([...selectedInterests, interest]);
-    }
-  };
+  // ── Autocomplete ────────────────────────────────────────────────────────────
 
-  const handleSearch = async () => {
-    if (!inputValue.trim()) return;
-
-    if (!allFiltersSelected) {
-      const missing: string[] = [];
-      if (selectedInterests.length === 0) missing.push('Interessos');
-      if (!selectedRadius) missing.push('Zona');
-      if (!selectedTime) missing.push('Temps');
-      if (!selectedPeople) missing.push('Persones');
-      Alert.alert(
-        'Filtres incomplets',
-        `Si us plau, selecciona: ${missing.join(', ')}`,
-        [{ text: 'D\'acord' }]
-      );
+  const fetchPredictions = (text: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (text.length < 2) {
+      setPredictions([]);
+      setShowDropdown(false);
       return;
     }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/autocomplete?input=${encodeURIComponent(text)}`
+        );
+        const data = await res.json();
+        const preds: Prediction[] = data.predictions || [];
+        setPredictions(preds);
+        setShowDropdown(preds.length > 0);
+      } catch {
+        setPredictions([]);
+        setShowDropdown(false);
+      }
+    }, 300);
+  };
+
+  const handleInputChange = (text: string) => {
+    setInputValue(text);
+    setSelectedPlaceId(null);
+    if (guideResult) setGuideResult(null);
+    fetchPredictions(text);
+  };
+
+  const handleSelectPrediction = (pred: Prediction) => {
+    setInputValue(pred.description);
+    setSelectedPlaceId(pred.place_id);
+    setPredictions([]);
+    setShowDropdown(false);
+  };
+
+  // ── Filtres ─────────────────────────────────────────────────────────────────
+
+  const toggleInterest = (interest: string) => {
+    setSelectedInterests((prev) =>
+      prev.includes(interest) ? prev.filter((i) => i !== interest) : [...prev, interest]
+    );
+  };
+
+  // ── Cerca ───────────────────────────────────────────────────────────────────
+
+  const handleSearch = async () => {
+    if (!inputValue.trim() || selectedInterests.length === 0) return;
 
     setLoading(true);
     setGuideResult(null);
-    scrollViewRef.current?.scrollToEnd({ animated: true });
+    setMainPhotoIndex(0);
+    setShowDropdown(false);
 
     try {
+      const hasContext = selectedInterests.includes('Context');
+      const interestsWithoutContext = selectedInterests.filter((i) => i !== 'Context');
+
+      const body: Record<string, unknown> = {
+        filters: { interests: interestsWithoutContext, context: hasContext },
+      };
+      if (selectedPlaceId) {
+        body.place_id = selectedPlaceId;
+        body.place_input = '';
+      } else {
+        body.place_input = inputValue.trim();
+      }
+
       const response = await fetch(`${API_BASE_URL}/guide`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          place_input: inputValue.trim(),
-          filters: {
-            interests: selectedInterests,
-            radius: selectedRadius,
-            time: selectedTime,
-            people: selectedPeople,
-          },
-        }),
+        body: JSON.stringify(body),
       });
 
       const data = await response.json();
@@ -139,128 +242,130 @@ export default function HomeScreen() {
           guide: data.guide,
           place_name: data.place_name,
           photo_urls: data.photo_urls || [],
+          usedInterests: [...selectedInterests],
         });
-        setCurrentPhotoIndex(0);
-        setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
       } else {
-        Alert.alert('Error', data.error || 'Hi ha hagut un error inesperat.', [{ text: 'D\'acord' }]);
+        Alert.alert('Error', data.error || 'Hi ha hagut un error inesperat.', [
+          { text: "D'acord" },
+        ]);
       }
-    } catch (error) {
-      Alert.alert('Error de connexió', 'No s\'ha pogut connectar amb el servidor. Comprova la connexió.', [{ text: 'D\'acord' }]);
+    } catch {
+      Alert.alert('Error de connexió', "No s'ha pogut connectar amb el servidor.", [
+        { text: "D'acord" },
+      ]);
     } finally {
       setLoading(false);
     }
   };
 
-  const filtersLabel = guideResult
-    ? [selectedTime, selectedPeople, ...(selectedInterests.length > 0 ? selectedInterests : [])]
-        .filter(Boolean)
-        .join(' · ')
-    : '';
+  // ── Renderitzar guia ────────────────────────────────────────────────────────
 
-  // ─────────────────────────────────────────
-  // RENDER GUIA
-  // ─────────────────────────────────────────
   const renderGuide = () => {
     if (!guideResult) return null;
-    const { guide, place_name, photo_urls } = guideResult;
+    const { guide, place_name, photo_urls, usedInterests } = guideResult;
+
+    const wasGuiaCompleta = ALL_INTERESTS.every((i) => usedInterests.includes(i));
+    const filtersLabel = wasGuiaCompleta ? 'GUIA COMPLETA' : usedInterests.join(' · ').toUpperCase();
 
     return (
       <View style={styles.guideContainer}>
-        {/* Capçalera */}
+        {/* Títol + badge */}
         <Text style={styles.guidePlaceName}>{place_name}</Text>
-        {filtersLabel ? (
-          <Text style={styles.guideFiltersLabel}>{filtersLabel}</Text>
-        ) : null}
+        <Text style={[styles.guideFiltersLabel, wasGuiaCompleta && styles.guiaCompletaLabel]}>
+          {filtersLabel}
+        </Text>
 
-        {/* Slider fotos */}
+        {/* Slider principal */}
         {photo_urls.length > 0 && (
-          <View style={styles.photoContainer}>
+          <View style={styles.mainSliderContainer}>
             <Image
-              source={{ uri: photo_urls[currentPhotoIndex] }}
-              style={styles.photo}
+              source={{ uri: photo_urls[mainPhotoIndex] }}
+              style={styles.mainPhoto}
               resizeMode="cover"
             />
             {photo_urls.length > 1 && (
-              <View style={styles.photoDots}>
-                {photo_urls.map((_, i) => (
-                  <TouchableOpacity key={i} onPress={() => setCurrentPhotoIndex(i)}>
-                    <View style={[styles.dot, i === currentPhotoIndex && styles.dotActive]} />
-                  </TouchableOpacity>
-                ))}
-              </View>
+              <>
+                <TouchableOpacity
+                  style={styles.arrowLeft}
+                  onPress={() => setMainPhotoIndex((i) => Math.max(0, i - 1))}
+                >
+                  <Text style={styles.arrowText}>‹</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.arrowRight}
+                  onPress={() =>
+                    setMainPhotoIndex((i) => Math.min(photo_urls.length - 1, i + 1))
+                  }
+                >
+                  <Text style={styles.arrowText}>›</Text>
+                </TouchableOpacity>
+                <View style={styles.photoDots}>
+                  {photo_urls.map((_, i) => (
+                    <View
+                      key={i}
+                      style={[styles.dot, i === mainPhotoIndex && styles.dotActive]}
+                    />
+                  ))}
+                </View>
+              </>
             )}
           </View>
         )}
 
-        {/* Descripció */}
-        {guide.descripcio ? (
-          <View style={styles.guideSection}>
-            <Text style={styles.guideSectionTitle}>🏛 Descripció</Text>
-            <Text style={styles.guideSectionText}>{guide.descripcio}</Text>
-          </View>
-        ) : null}
+        {/* Descripció i Context */}
+        {usedInterests.includes('Context') && (
+          <>
+            {guide.descripcio ? (
+              <View style={styles.guideSection}>
+                <Text style={styles.guideSectionTitle}>📍 Descripció</Text>
+                <Text style={styles.guideSectionText}>{guide.descripcio}</Text>
+              </View>
+            ) : null}
 
+            {guide.context ? (
+              <View style={styles.guideSection}>
+                <Text style={styles.guideSectionTitle}>🏛 Context</Text>
+                <Text style={styles.guideSectionText}>{guide.context}</Text>
+              </View>
+            ) : null}
+          </>
+        )}
 
         {/* Clima */}
         {guide.clima ? (
-          <View style={styles.guideSection}>
-            <Text style={styles.guideSectionTitle}>🌤 Clima ara</Text>
-            <Text style={styles.guideSectionText}>{guide.clima}</Text>
+          <View style={styles.climaContainer}>
+            <Text style={styles.climaText}>🌤 {guide.clima}</Text>
           </View>
         ) : null}
 
-        {/* Info pràctica */}
-        {guide.info_practica ? (
-          <View style={styles.guideSection}>
-            <Text style={styles.guideSectionTitle}>ℹ️ Info pràctica</Text>
-            {guide.info_practica.horaris ? (
-              <Text style={styles.guideInfoRow}>🕐 {guide.info_practica.horaris}</Text>
-            ) : null}
-            {guide.info_practica.adreca ? (
-              <Text style={styles.guideInfoRow}>📌 {guide.info_practica.adreca}</Text>
-            ) : null}
-            {guide.info_practica.valoracio ? (
-              <Text style={styles.guideInfoRow}>⭐ {guide.info_practica.valoracio}</Text>
-            ) : null}
-            {guide.info_practica.telefon ? (
-              <Text style={styles.guideInfoRow}>📞 {guide.info_practica.telefon}</Text>
-            ) : null}
-            {guide.info_practica.web ? (
-              <Text style={styles.guideInfoRow} numberOfLines={1}>🌐 {guide.info_practica.web}</Text>
-            ) : null}
-          </View>
-        ) : null}
-
-        {/* Llocs propers */}
-        {guide.llocs_propers && guide.llocs_propers.length > 0 ? (
-          <View style={styles.guideSection}>
-            <Text style={styles.guideSectionTitle}>🗺 A prop</Text>
-            {guide.llocs_propers.map((lloc, i) => (
-              <View key={i} style={styles.nearbyItem}>
-                <View style={styles.nearbyDot} />
-                <Text style={styles.nearbyText}>
-                  <Text style={styles.nearbyName}>{lloc.nom}</Text>
-                  {lloc.tipus ? <Text style={styles.nearbyType}> · {lloc.tipus}</Text> : null}
-                </Text>
+        {/* Seccions per interès */}
+        {guide.seccions &&
+          Object.entries(guide.seccions).map(([interest, places]) => (
+            <View key={interest} style={styles.seccioContainer}>
+              <View style={styles.seccioHeader}>
+                <Text style={styles.seccioIcon}>{SECTION_ICONS[interest] ?? '📌'}</Text>
+                <Text style={styles.seccioTitle}>{interest}</Text>
               </View>
-            ))}
-          </View>
-        ) : null}
-
-        {/* Consell */}
-        {guide.consell ? (
-          <View style={styles.consellContainer}>
-            <Text style={styles.consellText}>💡 {guide.consell}</Text>
-          </View>
-        ) : null}
+              {places.map((lloc, idx) => (
+                <View key={idx} style={styles.llocCard}>
+                  <View style={styles.llocHeader}>
+                    <Text style={styles.llocNom}>{lloc.nom}</Text>
+                    <StarRating rating={lloc.rating} />
+                  </View>
+                  <PhotoSlider photos={lloc.photo_urls} />
+                  {lloc.descripcio ? (
+                    <Text style={styles.llocDescripcio}>{lloc.descripcio}</Text>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          ))}
       </View>
     );
   };
 
-  // ─────────────────────────────────────────
-  // RENDER PRINCIPAL
-  // ─────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────────────────
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <KeyboardAvoidingView
@@ -270,7 +375,7 @@ export default function HomeScreen() {
         {/* Header */}
         <View style={styles.header}>
           <IconSymbol name="gearshape.circle.fill" size={30} color={Colors.dark.tabIconDefault} />
-          <GlowText text="SwifTour" duration={2500} style={styles.title} />
+          <GlowText text="SwifTour" duration={2500} style={styles.headerTitle} />
           <TouchableOpacity onPress={() => router.push('profile-modal')}>
             <IconSymbol name="person.circle.fill" size={30} color={Colors.dark.tabIconDefault} />
           </TouchableOpacity>
@@ -278,82 +383,95 @@ export default function HomeScreen() {
 
         <ScrollView
           ref={scrollViewRef}
-          style={styles.messagesContainer}
-          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+          style={styles.scrollView}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.content} />
-
-          {/* Títol i input */}
+          {/* Subtítol */}
           <View style={styles.titleContainer}>
-            <GradientIcon style={styles.icon} name="mappin.circle.fill" size={28} />
-            <Text style={styles.title2}>Quin lloc vols descobrir?</Text>
+            <IconSymbol
+              style={styles.pinIcon}
+              color={Colors.dark.secondColor}
+              name="mappin.circle.fill"
+              size={28}
+            />
+            <Text style={styles.subtitle}>Quin lloc vols descobrir?</Text>
           </View>
 
-          <View style={styles.inputContainer}>
+          {/* Input + dropdown autocomplete */}
+          <View style={styles.inputWrapper}>
             <TextInput
               style={styles.input}
-              placeholder="Nom o link de Google Maps..."
+              placeholder="Nom del lloc o link de Google Maps..."
               placeholderTextColor="#a5a5a5"
               value={inputValue}
-              onChangeText={(text) => {
-                setInputValue(text);
-                if (guideResult) setGuideResult(null);
-              }}
+              onChangeText={handleInputChange}
               editable={!loading}
-              multiline
+              returnKeyType="search"
+              onSubmitEditing={handleSearch}
             />
+            {showDropdown && (
+              <View style={styles.dropdown}>
+                {predictions.map((pred) => (
+                  <TouchableOpacity
+                    key={pred.place_id}
+                    style={styles.dropdownItem}
+                    onPress={() => handleSelectPrediction(pred)}
+                  >
+                    <Text style={styles.dropdownMain}>{pred.main_text}</Text>
+                    {pred.secondary_text ? (
+                      <Text style={styles.dropdownSec}>{pred.secondary_text}</Text>
+                    ) : null}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
           </View>
 
-          {/* Filtres */}
+          {/* Filtres d'interès */}
           <View style={styles.filters}>
-            <TouchableOpacity
-              style={[styles.filterButton, selectedInterests.length > 0 && styles.filterButtonActive]}
-              onPress={() => setFilterModalOpen('interests')}
-            >
-              <Text style={styles.textFilter}>Interessos</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.filterButton, selectedRadius && styles.filterButtonActive]}
-              onPress={() => setFilterModalOpen('radius')}
-            >
-              <Text style={styles.textFilter}>Zona</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.filterButton, selectedTime && styles.filterButtonActive]}
-              onPress={() => setFilterModalOpen('time')}
-            >
-              <Text style={styles.textFilter}>Temps</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.filterButton, selectedPeople && styles.filterButtonActive]}
-              onPress={() => setFilterModalOpen('people')}
-            >
-              <Text style={styles.textFilter}>Persones</Text>
-            </TouchableOpacity>
+            {ALL_INTERESTS.map((option) => (
+              <TouchableOpacity
+                key={option}
+                style={[
+                  styles.filterButton,
+                  selectedInterests.includes(option) && styles.filterButtonActive,
+                ]}
+                onPress={() => toggleInterest(option)}
+              >
+                <Text style={styles.filterText}>{option}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
-          {/* Botó buscar */}
-          <View style={styles.buttonContainer}>
+          {/* Botó */}
+          <View style={styles.buttonRow}>
             <TouchableOpacity
               style={[styles.sendButton, !canSearch && styles.sendButtonDisabled]}
               onPress={handleSearch}
               disabled={!canSearch}
             >
-              {loading ? (
-                <ActivityIndicator size="small" color={Colors.middleSection} />
-              ) : (
-                <Text style={[styles.sendButtonText, !canSearch && styles.sendButtonTextDisabled]}>
-                  Buscar →
-                </Text>
-              )}
+              <Text
+                style={[styles.sendButtonText, !canSearch && styles.sendButtonTextDisabled]}
+              >
+                Buscar →
+              </Text>
             </TouchableOpacity>
           </View>
 
-          {/* Lotties: només si no hi ha guia i no està carregant */}
+          {/* Loading fora del botó */}
+          {loading && (
+            <View style={styles.loadingContainer}>
+              <Text style={styles.loadingText}>GENERANT LA TEVA GUIA</Text>
+              <Text style={styles.loadingText2}>Pot tardar una estona...</Text>
+              <ActivityIndicator
+                size="large"
+                color={Colors.dark.tabIconDefault}
+                style={{ marginTop: 10 }}
+              />
+            </View>
+          )}
+
+          {/* Animació inicial */}
           {!guideResult && !loading && (
             <View style={styles.lottieContainer}>
               <LottieView
@@ -361,7 +479,7 @@ export default function HomeScreen() {
                 source={require('../../assets/images/travel loading.json')}
                 loop={false}
                 speed={2.5}
-                onAnimationFinish={handleFinish}
+                onAnimationFinish={handleAnimationFinish}
                 style={styles.lottieTop}
               />
               <LottieView
@@ -373,127 +491,22 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* Indicador de càrrega */}
-          {loading && (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={Colors.dark.tabIconDefault} />
-              <Text style={styles.loadingText}>Generant la teva guia...</Text>
-            </View>
-          )}
-
           {/* Guia generada */}
           {renderGuide()}
 
           <View style={{ height: 40 }} />
         </ScrollView>
       </KeyboardAvoidingView>
-
-      {/* ── MODALS ── */}
-
-      <Modal visible={filterModalOpen === 'interests'} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Interessos</Text>
-            {['Gastronomia', 'Natura i rutes', 'Història i cultura', 'Allotjament', 'Oci i compres'].map((option) => (
-              <TouchableOpacity key={option} style={styles.radioOption} onPress={() => toggleInterest(option)}>
-                <View style={[styles.checkBox, selectedInterests.includes(option) && styles.checkBoxSelected]}>
-                  {selectedInterests.includes(option) && <Text style={styles.checkMark}>✓</Text>}
-                </View>
-                <Text style={styles.radioText}>{option}</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={styles.doneButton} onPress={() => setFilterModalOpen(null)}>
-              <Text style={styles.doneButtonText}>Desa</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={filterModalOpen === 'radius'} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Zona</Text>
-            {['500 m', '1 km', '2 km'].map((option) => (
-              <TouchableOpacity key={option} style={styles.radioOption} onPress={() => { setSelectedRadius(option); setFilterModalOpen(null); }}>
-                <View style={[styles.radioCircle, selectedRadius === option && styles.radioSelected]}>
-                  {selectedRadius === option && <View style={styles.radioDot} />}
-                </View>
-                <Text style={styles.radioText}>{option}</Text>
-              </TouchableOpacity>
-            ))}
-            
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={filterModalOpen === 'time'} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Temps</Text>
-            {['Indefinit', 'Unes hores', 'Mig dia', 'Tot el dia'].map((option) => (
-              <TouchableOpacity key={option} style={styles.radioOption} onPress={() => { setSelectedTime(option); setFilterModalOpen(null); }}>
-                <View style={[styles.radioCircle, selectedTime === option && styles.radioSelected]}>
-                  {selectedTime === option && <View style={styles.radioDot} />}
-                </View>
-                <Text style={styles.radioText}>{option}</Text>
-              </TouchableOpacity>
-            ))}
-            
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={filterModalOpen === 'people'} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Persones</Text>
-            {['Sol', 'Parella', 'Familia', 'Grup'].map((option) => (
-              <TouchableOpacity key={option} style={styles.radioOption} onPress={() => { setSelectedPeople(option); setFilterModalOpen(null); }}>
-                <View style={[styles.radioCircle, selectedPeople === option && styles.radioSelected]}>
-                  {selectedPeople === option && <View style={styles.radioDot} />}
-                </View>
-                <Text style={styles.radioText}>{option}</Text>
-              </TouchableOpacity>
-            ))}
-            
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
 
-// ─────────────────────────────────────────
-// STYLES
-// ─────────────────────────────────────────
+// ─── Estils ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  lottieContainer: {
-    width: 225,
-    height: 225,
-    alignSelf: 'center',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  lottieTop: {
-    position: 'absolute',
-    width: 225,
-    height: 225,
-    opacity: 1,
-  },
-  lottieBottom: {
-    position: 'absolute',
-    width: 180,
-    height: 180,
-    opacity: 0.9,
-  },
-  icon: { width: 28, height: 28, marginBottom: 10 },
-  content: {
-    backgroundColor: Colors.middleSection,
-    paddingTop: 16,
-  },
   safeArea: { flex: 1, backgroundColor: '#1d1d1d' },
   container: { flex: 1, backgroundColor: '#1d1d1d' },
+
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -501,113 +514,121 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 6,
     paddingBottom: 12,
-    shadowColor: '#000000',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 6,
     elevation: 3,
   },
-  title: { fontSize: 18, fontWeight: '700', color: '#ffffff' },
-  title2: { fontSize: 18, fontWeight: '600', color: '#fff', marginBottom: 10 },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: '#ffffff' },
+
+  scrollView: { flex: 1, paddingHorizontal: 16, backgroundColor: Colors.middleSection },
+
   titleContainer: {
-    paddingTop: 20,
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 25,
+    justifyContent: 'center',
+    marginHorizontal: 8,
+    marginTop: 30,
+    marginBottom: 12,
     gap: 6,
   },
-  messagesContainer: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: Colors.middleSection,
-  },
-  loadingContainer: {
-    alignItems: 'center',
-    paddingVertical: 32,
-    gap: 12,
-  },
-  loadingText: {
-    color: '#a5a5a5',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    padding: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.middleSection,
-  },
-  buttonContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: Colors.middleSection,
-  },
+  pinIcon: { width: 28, height: 28, backgroundColor: 'white', borderRadius: 20 },
+  subtitle: { fontSize: 15, fontWeight: '800', color: '#fff', letterSpacing: 0.6, textTransform: 'uppercase', },
+
+  // Input + dropdown
+  inputWrapper: { marginHorizontal: 4, marginBottom: 4, zIndex: 10 },
   input: {
-    flex: 1,
-    height: 40,
+    height: 44,
     borderWidth: 1,
     borderColor: '#606060',
-    borderRadius: 20,
+    borderRadius: 22,
     paddingHorizontal: 18,
-    paddingVertical: 12,
     fontSize: 14,
     color: '#ffffff',
     backgroundColor: '#252525',
   },
-  sendButton: {
-    width: 110,
-    height: 34,
-    borderRadius: 20,
-    backgroundColor: Colors.dark.tabIconDefault,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sendButtonDisabled: {
+  dropdown: {
     backgroundColor: '#2a2a2a',
+    borderWidth: 1,
+    borderColor: '#444',
+    borderRadius: 12,
+    marginTop: 4,
+    overflow: 'hidden',
   },
-  sendButtonText: {
-    fontSize: 13,
-    color: Colors.middleSection,
-    fontWeight: '600',
+  dropdownItem: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
   },
-  sendButtonTextDisabled: {
-    color: '#444444',
-  },
+  dropdownMain: { fontSize: 14, color: '#ffffff', fontWeight: '600' },
+  dropdownSec: { fontSize: 12, color: '#888888', marginTop: 1 },
+
+  // Filtres
   filters: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'center',
     gap: 8,
-    marginTop: 12,
-    marginBottom: 10,
-    paddingHorizontal: 6,
+    marginTop: 14,
+    marginBottom: 14,
+    paddingHorizontal: 4,
+
   },
-  textFilter: { fontSize: 11, color: '#ffffff', fontWeight: '600' },
   filterButton: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
     backgroundColor: '#333333',
+  },
+  filterButtonActive: { backgroundColor: Colors.dark.secondColor },
+
+  filterText: { fontSize: 11, color: '#ffffff', fontWeight: '700', letterSpacing: 0.4},
+
+  // Botó
+  buttonRow: { alignItems: 'center', marginBottom: 4 },
+  sendButton: {
+    width: 120,
+    height: 32,
+    borderRadius: 20,
+    backgroundColor: Colors.dark.tabIconDefault,
     justifyContent: 'center',
     alignItems: 'center',
+    marginTop: 8,
   },
-  filterButtonActive: {
-    backgroundColor: Colors.dark.secondColor,
-  },
+  sendButtonDisabled: { backgroundColor: '#2a2a2a' },
+  sendButtonText: { fontSize: 14, color: Colors.middleSection, fontWeight: '800', letterSpacing: 0.5 },
+  sendButtonTextDisabled: { color: Colors.middleSection },
 
-  // ── Guia ──
+  // Loading
+  loadingContainer: { alignItems: 'center', paddingVertical: 28 },
+  loadingText: { color: '#929292', fontSize: 14, fontWeight: '700', letterSpacing: 0.8, marginBottom: 10, },
+  loadingText2: { color: '#929292', fontSize: 14, fontWeight: '400', letterSpacing: 0.8, marginBottom: 10 },
+
+
+  // Lottie
+  lottieContainer: {
+    width: 175,
+    height: 175,
+    alignSelf: 'center',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 30,
+  },
+  lottieTop: { position: 'absolute', width: 220, height: 220 },
+  lottieBottom: { position: 'absolute', width: 180, height: 180, opacity: 0.9 },
+
+  // Guia
   guideContainer: {
     marginTop: 20,
-    marginHorizontal: 4,
+    marginHorizontal: 0,
     borderRadius: 20,
     backgroundColor: '#1a1a1a',
     borderWidth: 1,
     borderColor: '#2e2e2e',
     overflow: 'hidden',
-    paddingBottom: 8,
+    paddingBottom: 16,
   },
   guidePlaceName: {
     fontSize: 22,
@@ -620,161 +641,117 @@ const styles = StyleSheet.create({
   guideFiltersLabel: {
     fontSize: 11,
     color: Colors.dark.secondColor,
-    fontWeight: '600',
+    fontWeight: '700',
     paddingHorizontal: 18,
     paddingBottom: 12,
-    letterSpacing: 0.3,
+    letterSpacing: 0.5,
     textTransform: 'uppercase',
   },
-  photoContainer: {
-    width: '100%',
-    height: 200,
-    position: 'relative',
-    marginBottom: 4,
+  guiaCompletaLabel: { color: '#FFD700' },
+
+  mainSliderContainer: { width: '100%', height: 220, position: 'relative', marginBottom: 4 },
+  mainPhoto: { width: '100%', height: 220 },
+
+  arrowLeft: {
+    position: 'absolute',
+    left: 8,
+    top: '35%',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 20,
+    paddingHorizontal: 8,
+    paddingBottom: 3,
   },
-  photo: {
-    width: '100%',
-    height: 200,
+  arrowRight: {
+    position: 'absolute',
+    right: 8,
+    top: '35%',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 20,
+    paddingHorizontal: 8,
+    paddingBottom: 3,
   },
+  arrowText: { color: '#fff', fontSize: 24, fontWeight: '700' },
+
   photoDots: {
     position: 'absolute',
-    bottom: 10,
+    bottom: 8,
     width: '100%',
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 6,
   },
-  dot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: 'rgba(255,255,255,0.4)',
-  },
-  dotActive: {
-    backgroundColor: '#ffffff',
-  },
-  guideSection: {
-    paddingHorizontal: 18,
-    paddingTop: 16,
-    paddingBottom: 2,
-  },
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.35)' },
+  dotActive: { backgroundColor: '#ffffff' },
+
+  guideSection: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 4 },
   guideSectionTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: Colors.dark.tabIconDefault,
     marginBottom: 6,
     textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  guideSectionText: { fontSize: 14, color: '#d0d0d0', lineHeight: 21 },
+
+  climaContainer: {
+    marginHorizontal: 18,
+    marginTop: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#242424',
+    borderRadius: 10,
+  },
+  climaText: { fontSize: 13, color: '#b0b0b0' },
+
+  seccioContainer: {
+    marginTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#2e2e2e',
+    paddingTop: 16,
+  },
+  seccioHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 18,
+    marginBottom: 12,
+  },
+  seccioIcon: { fontSize: 18 },
+  seccioTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#ffffff',
+    textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  guideSectionText: {
-    fontSize: 14,
-    color: '#d0d0d0',
-    lineHeight: 21,
-  },
-  guideInfoRow: {
-    fontSize: 13,
-    color: '#b0b0b0',
-    lineHeight: 22,
-  },
-  nearbyItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 4,
-    gap: 8,
-  },
-  nearbyDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: Colors.dark.secondColor,
-  },
-  nearbyText: { flex: 1 },
-  nearbyName: {
-    fontSize: 13,
-    color: '#e0e0e0',
-    fontWeight: '600',
-  },
-  nearbyType: {
-    fontSize: 12,
-    color: '#888888',
-  },
-  consellContainer: {
-    marginHorizontal: 18,
-    marginTop: 16,
-    marginBottom: 10,
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: '#242424',
-    borderLeftWidth: 3,
-    borderLeftColor: Colors.dark.tabIconDefault,
-  },
-  consellText: {
-    fontSize: 13,
-    color: '#cccccc',
-    lineHeight: 20,
-    fontStyle: 'italic',
-  },
 
-  // ── Modals ──
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: '#242424',
-    borderRadius: 20,
-    borderColor: '#848484',
+  llocCard: {
+    marginHorizontal: 12,
+    marginBottom: 14,
+    borderRadius: 14,
+    backgroundColor: '#222222',
+    overflow: 'hidden',
     borderWidth: 1,
-    padding: 24,
-    width: '85%',
-    maxHeight: '70%',
+    borderColor: '#2e2e2e',
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#ffffff',
-    marginBottom: 20,
-    textAlign: 'center',
+  llocHeader: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 6, gap: 4 },
+  llocNom: { fontSize: 15, fontWeight: '700', color: '#ffffff' },
+  starsRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 2 },
+  star: { fontSize: 13 },
+  starFull: { color: '#FFD700' },
+  starEmpty: { color: '#3a3a3a' },
+  ratingText: { fontSize: 12, color: '#888888', marginLeft: 4 },
+
+  sliderContainer: { width: '100%', height: 160, position: 'relative' },
+  sliderPhoto: { width: '100%', height: 160 },
+
+  llocDescripcio: {
+    fontSize: 13,
+    color: '#c0c0c0',
+    lineHeight: 20,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 12,
   },
-  radioOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-  },
-  radioCircle: {
-    width: 20,
-    height: 20,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.dark.secondColor,
-    marginRight: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  radioSelected: { backgroundColor: Colors.dark.secondColor },
-  radioDot: { width: 12, height: 12, borderRadius: 6 },
-  checkBox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: Colors.dark.secondColor,
-    marginRight: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  checkBoxSelected: { backgroundColor: Colors.dark.secondColor },
-  checkMark: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
-  radioText: { fontSize: 14, color: '#ffffff', fontWeight: '500' },
-  doneButton: {
-    backgroundColor: Colors.dark.tabIconDefault,
-    paddingVertical: 10,
-    borderRadius: 20,
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  doneButtonText: { color: '#242424', fontSize: 14, fontWeight: '600' },
 });
