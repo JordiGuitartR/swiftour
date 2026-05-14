@@ -135,6 +135,7 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(false);
   const [guideResult, setGuideResult] = useState<GuideResult | null>(null);
   const [mainPhotoIndex, setMainPhotoIndex] = useState(0);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
 
   const scrollViewRef = useRef<ScrollView>(null);
   const animationRef = useRef<LottieView>(null);
@@ -142,8 +143,7 @@ export default function HomeScreen() {
 
   const isGuiaCompleta = ALL_INTERESTS.every((i) => selectedInterests.includes(i));
 
-  const interestsWithoutContext = selectedInterests.filter((i) => i !== 'Context');
-  const canSearch = inputValue.trim().length > 0 && interestsWithoutContext.length > 0 && !loading;
+  const canSearch = inputValue.trim().length > 0 && selectedInterests.length > 0 && !loading;
 
   // Lottie ping-pong
   const handleAnimationFinish = () => {
@@ -205,6 +205,20 @@ export default function HomeScreen() {
     );
   };
 
+  // ── Toggle seccions ─────────────────────────────────────────────────────────
+
+  const toggleSection = (interest: string) => {
+    setCollapsedSections((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(interest)) {
+        newSet.delete(interest);
+      } else {
+        newSet.add(interest);
+      }
+      return newSet;
+    });
+  };
+
   // ── Cerca ───────────────────────────────────────────────────────────────────
 
   const handleSearch = async () => {
@@ -244,6 +258,8 @@ export default function HomeScreen() {
           photo_urls: data.photo_urls || [],
           usedInterests: [...selectedInterests],
         });
+        // Inicialitzar totes les seccions com a col·lapsades
+        setCollapsedSections(new Set(Object.keys(data.guide.seccions || {})));
       } else {
         Alert.alert('Error', data.error || 'Hi ha hagut un error inesperat.', [
           { text: "D'acord" },
@@ -338,28 +354,44 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
+        
         {/* Seccions per interès */}
         {guide.seccions &&
-          Object.entries(guide.seccions).map(([interest, places]) => (
-            <View key={interest} style={styles.seccioContainer}>
-              <View style={styles.seccioHeader}>
-                <Text style={styles.seccioIcon}>{SECTION_ICONS[interest] ?? '📌'}</Text>
-                <Text style={styles.seccioTitle}>{interest}</Text>
-              </View>
-              {places.map((lloc, idx) => (
-                <View key={idx} style={styles.llocCard}>
-                  <View style={styles.llocHeader}>
-                    <Text style={styles.llocNom}>{lloc.nom}</Text>
-                    <StarRating rating={lloc.rating} />
-                  </View>
-                  <PhotoSlider photos={lloc.photo_urls} />
-                  {lloc.descripcio ? (
-                    <Text style={styles.llocDescripcio}>{lloc.descripcio}</Text>
-                  ) : null}
+          ALL_INTERESTS
+            .filter((interest) => interest !== 'Context')
+            .filter((interest) => guide.seccions?.[interest]?.length)
+            .map((interest) => {
+              const places = guide.seccions?.[interest] ?? [];
+              const isCollapsed = collapsedSections.has(interest);
+
+              return (
+                <View key={interest} style={styles.seccioContainer}>
+                  <TouchableOpacity
+                    style={styles.seccioHeader}
+                    onPress={() => toggleSection(interest)}
+                  >
+                    <Text style={styles.seccioIcon}>{SECTION_ICONS[interest] ?? '📌'}</Text>
+                    <Text style={styles.seccioTitle}>{interest}</Text>
+                    <Text style={styles.seccioArrow}>{isCollapsed ? '▼' : '▲'}</Text>
+                  </TouchableOpacity>
+
+                  {!isCollapsed && places.map((lloc, idx) => (
+                    <View key={idx} style={styles.llocCard}>
+                      <View style={styles.llocHeader}>
+                        <Text style={styles.llocNom}>{lloc.nom}</Text>
+                        <StarRating rating={lloc.rating} />
+                      </View>
+
+                      <PhotoSlider photos={lloc.photo_urls} />
+
+                      {lloc.descripcio ? (
+                        <Text style={styles.llocDescripcio}>{lloc.descripcio}</Text>
+                      ) : null}
+                    </View>
+                  ))}
                 </View>
-              ))}
-            </View>
-          ))}
+              );
+            })}
       </View>
     );
   };
@@ -375,7 +407,9 @@ export default function HomeScreen() {
         {/* Header */}
         <View style={styles.header}>
           <IconSymbol name="gearshape.circle.fill" size={30} color={Colors.dark.tabIconDefault} />
-          <GlowText text="SwifTour" duration={2500} style={styles.headerTitle} />
+          <TouchableOpacity onPress={() => scrollViewRef.current?.scrollTo({ y: 0, animated: true })}>
+            <GlowText text="SwifTour" duration={2500} style={styles.headerTitle} />
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => router.push('profile-modal')}>
             <IconSymbol name="person.circle.fill" size={30} color={Colors.dark.tabIconDefault} />
           </TouchableOpacity>
@@ -584,7 +618,7 @@ const styles = StyleSheet.create({
   },
   filterButtonActive: { backgroundColor: Colors.dark.secondColor },
 
-  filterText: { fontSize: 11, color: '#ffffff', fontWeight: '700', letterSpacing: 0.4},
+  filterText: { fontSize: 11, color: '#ffffff', fontWeight: '700', letterSpacing: 0.4 },
 
   // Botó
   buttonRow: { alignItems: 'center', marginBottom: 4 },
@@ -707,7 +741,7 @@ const styles = StyleSheet.create({
   seccioContainer: {
     marginTop: 20,
     borderTopWidth: 1,
-    borderTopColor: '#2e2e2e',
+    borderTopColor: Colors.dark.tint,
     paddingTop: 16,
   },
   seccioHeader: {
@@ -715,7 +749,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     paddingHorizontal: 18,
-    marginBottom: 12,
+    marginBottom: 0,
   },
   seccioIcon: { fontSize: 18 },
   seccioTitle: {
@@ -724,11 +758,18 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    flex: 1,
+  },
+  seccioArrow: {
+    fontSize: 16,
+    color: Colors.dark.tabIconDefault,
+    fontWeight: '700',
   },
 
   llocCard: {
     marginHorizontal: 12,
-    marginBottom: 14,
+    
+    marginTop: 14,
     borderRadius: 14,
     backgroundColor: '#222222',
     overflow: 'hidden',
